@@ -1,0 +1,167 @@
+[
+  {
+    "id": "product_001",
+    "name": "Professional Colour Cream 5N",
+    "brand": "Sample Brand",
+    "category": "Hair Colour",
+    "packagingType": "tube",
+    "shadeCode": "5N",
+    "aliases": ["Colour Cream 5N", "5N Natural Brown", "Sample 5N"],
+    "imageUrl": "",
+    "barcode": "100000000001"
+  },
+  {
+    "id": "product_002",
+    "name": "Professional Colour Cream 6N",
+    "brand": "Sample Brand",
+    "category": "Hair Colour",
+    "packagingType": "tube",
+    "shadeCode": "6N",
+    "aliases": ["Colour Cream 6N", "6N Dark Blonde", "Sample 6N"],
+    "imageUrl": "",
+    "barcode": "100000000002"
+  },
+  {
+    "id": "product_003",
+    "name": "Professional Colour Cream 7A",
+    "brand": "Sample Brand",
+    "category": "Hair Colour",
+    "packagingType": "tube",
+    "shadeCode": "7A",
+    "aliases": ["Colour Cream 7A", "7A Ash Blonde"],
+    "imageUrl": "",
+    "barcode": "100000000003"
+  },
+  {
+    "id": "product_004",
+    "name": "Chromatic Gloss Toner 9V",
+    "brand": "North Studio",
+    "category": "Toner",
+    "packagingType": "bottle",
+    "shadeCode": "9V",
+    "aliases": ["Gloss 9V", "Violet Toner 9V"],
+    "imageUrl": "",
+    "barcode": "100000000004"
+  },
+  {
+    "id": "product_005",
+    "name": "Chromatic Gloss Toner 10P",
+    "brand": "North Studio",
+    "category": "Toner",
+    "packagingType": "bottle",
+    "shadeCode": "10P",
+    "aliases": ["Gloss 10P", "Pearl Toner 10P"],
+    "imageUrl": "",
+    "barcode": "100000000005"
+  },
+  {
+    "id": "product_006",
+    "name": "Lift Powder Lightener Blue",
+    "brand": "Luma Pro",
+    "category": "Lightener",
+    "packagingType": "tub",
+    "shadeCode": "",
+    "aliases": ["Blue Lightener", "Luma Lift Powder"],
+    "imageUrl": "",
+    "barcode": "100000000006"
+  },
+  {
+    "id": "product_007",
+    "name": "Lift Powder Lightener Violet",
+    "brand": "Luma Pro",
+    "category": "Lightener",
+    "packagingType": "tub",
+    "shadeCode": "",
+    "aliases": ["Violet Lightener", "Luma Violet Powder"],
+    "imageUrl": "",
+    "barcode": "100000000007"
+  },
+  {
+    "id": "product_008",
+    "name": "Care Repair Masque",
+    "brand": "Evergreen Lab",
+    "category": "Treatment",
+    "packagingType": "jar",
+    "shadeCode": "",
+    "aliases": ["Repair Mask", "Evergreen Masque"],
+    "imageUrl": "",
+    "barcode": "100000000008"
+  },
+  {
+    "id": "product_009",
+    "name": "Smooth Control Shampoo",
+    "brand": "Evergreen Lab",
+    "category": "Backbar Shampoo",
+    "packagingType": "bottle",
+    "shadeCode": "",
+    "aliases": ["Smooth Shampoo", "Control Shampoo"],
+    "imageUrl": "",
+    "barcode": "100000000009"
+  },
+  {
+    "id": "product_010",
+    "name": "Smooth Control Conditioner",
+    "brand": "Evergreen Lab",
+    "category": "Backbar Conditioner",
+    "packagingType": "bottle",
+    "shadeCode": "",
+    "aliases": ["Smooth Conditioner", "Control Conditioner"],
+    "imageUrl": "",
+    "barcode": "100000000010"
+  },
+  {
+    "id": "product_011",
+    "name": "Foil Pack Colour Box 4RV",
+    "brand": "Vivid Room",
+    "category": "Hair Colour",
+    "packagingType": "box",
+    "shadeCode": "4RV",
+    "aliases": ["4RV Box", "Red Violet 4RV"],
+    "imageUrl": "",
+    "barcode": "100000000011"
+  },
+  {
+    "id": "product_012",
+    "name": "Foil Pack Colour Box 5RV",
+    "brand": "Vivid Room",
+    "category": "Hair Colour",
+    "packagingType": "box",
+    "shadeCode": "5RV",
+    "aliases": ["5RV Box", "Red Violet 5RV"],
+    "imageUrl": "",
+    "barcode": "100000000012"
+  },
+  {
+    "id": "product_013",
+    "name": "Developer Cream 10 Volume",
+    "brand": "Sample Brand",
+    "category": "Developer",
+    "packagingType": "bottle",
+    "shadeCode": "10VOL",
+    "aliases": ["10 Volume Developer", "10 Vol"],
+    "imageUrl": "",
+    "barcode": "100000000013"
+  },
+  {
+    "id": "product_014",
+    "name": "Developer Cream 20 Volume",
+    "brand": "Sample Brand",
+    "category": "Developer",
+    "packagingType": "bottle",
+    "shadeCode": "20VOL",
+    "aliases": ["20 Volume Developer", "20 Vol"],
+    "imageUrl": "",
+    "barcode": "100000000014"
+  },
+  {
+    "id": "product_015",
+    "name": "Bond Builder Ampoule",
+    "brand": "BondWorks",
+    "category": "Treatment",
+    "packagingType": "ampoule",
+    "shadeCode": "",
+    "aliases": ["Bond Ampoule", "Builder Ampoule"],
+    "imageUrl": "",
+    "barcode": "100000000015"
+  }
+]

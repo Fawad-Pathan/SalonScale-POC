@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>SalonScale PoC</string>
+	<key>NSCameraUsageDescription</key>
+	<string>SalonScale PoC needs camera access so stylists can photograph backbar inventory.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>SalonScale PoC needs photo library access so stylists can upload inventory images.</string>
+</dict>
+</plist>
