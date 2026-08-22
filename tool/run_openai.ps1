@@ -1,12 +1,41 @@
 param(
   [string]$DeviceId = "emulator-5554",
-  [string]$Flutter = "C:\Users\pfawa\flutter\bin\flutter.bat"
+  [string]$Flutter = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $EnvPath = Join-Path $ProjectRoot ".env"
+
+function Resolve-FlutterExecutable {
+  param([string]$RequestedFlutter)
+
+  if (-not [string]::IsNullOrWhiteSpace($RequestedFlutter)) {
+    if (Test-Path -LiteralPath $RequestedFlutter) {
+      return $RequestedFlutter
+    }
+    $RequestedCommand = Get-Command $RequestedFlutter -ErrorAction SilentlyContinue
+    if ($RequestedCommand) {
+      return $RequestedCommand.Source
+    }
+    throw "Flutter executable not found: $RequestedFlutter"
+  }
+
+  $PathCommand = Get-Command "flutter" -ErrorAction SilentlyContinue
+  if ($PathCommand) {
+    return $PathCommand.Source
+  }
+
+  $UserFlutter = Join-Path $env:USERPROFILE "flutter\bin\flutter.bat"
+  if (Test-Path -LiteralPath $UserFlutter) {
+    return $UserFlutter
+  }
+
+  throw "Flutter was not found. Add Flutter to PATH, install it at $UserFlutter, or pass -Flutter C:\path\to\flutter\bin\flutter.bat"
+}
+
+$Flutter = Resolve-FlutterExecutable $Flutter
 
 if (-not (Test-Path -LiteralPath $EnvPath)) {
   throw "Missing .env in $ProjectRoot"
