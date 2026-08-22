@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import '../../../core/widgets/scanner_overlay.dart';
 import '../../inventory/data/inventory_providers.dart';
 import '../data/scan_providers.dart';
 import '../models/scan_product_result.dart';
+import '../services/product_image_lookup_service.dart';
 
 class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({
@@ -42,12 +44,17 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   var _isCapturing = false;
   var _isAnalyzing = false;
   var _isPaused = false;
+  var _scanNowAfterBusy = false;
   var _statusLabel = 'Scanning live inventory';
   var _scanGeneration = 0;
   String? _lastSavedSignature;
   DateTime? _lastSavedAt;
+  _ScannedProductNotice? _lastScanNotice;
+  Timer? _noticeDismissTimer;
+  final _imageLookupCache = <String, Future<ProductWebImage?>>{};
 
   static const _scanInterval = Duration(seconds: 3);
+  static const _configurationRetryInterval = Duration(seconds: 8);
   static const _duplicateCooldown = Duration(seconds: 30);
   static const _reviewWindow = Duration(milliseconds: 2400);
 
@@ -60,7 +67,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         ref.read(currentScanControllerProvider.notifier).reset();
       }
       if (widget.isActive) {
-        _initializeCamera();
+        Future<void>.delayed(const Duration(milliseconds: 800), () {
+          if (mounted && widget.isActive && !_isPaused) {
+            _initializeCamera();
+          }
+        });
       }
     });
   }
@@ -86,6 +97,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scanTimer?.cancel();
+    _noticeDismissTimer?.cancel();
     _cameraController?.dispose();
     super.dispose();
   }
@@ -208,6 +220,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         _isAnalyzing) {
       return;
     }
+    if (!_hasLiveAiConfiguration) {
+      setState(() => _statusLabel = _missingAiConfigurationMessage);
+      _scanTimer?.cancel();
+      _scanTimer = Timer(_configurationRetryInterval, () {
+        if (mounted && widget.isActive && !_isPaused) {
+          _scheduleNextScan(Duration.zero);
+        }
+      });
+      return;
+    }
     _scanTimer?.cancel();
     _scanTimer = Timer(delay, () {
       if (!mounted) {
@@ -221,6 +243,13 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     final controller = _cameraController;
     final generation = _scanGeneration;
     _scanTimer?.cancel();
+    if (!_hasLiveAiConfiguration) {
+      if (mounted) {
+        setState(() => _statusLabel = _missingAiConfigurationMessage);
+      }
+      _scheduleNextScan(_configurationRetryInterval);
+      return;
+    }
     if (_isCapturing ||
         _isAnalyzing ||
         _isPaused ||
@@ -236,6 +265,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     });
     try {
       final capture = await controller.takePicture();
+      debugPrint('SalonScale scan: captured ${capture.path}');
       if (!mounted ||
           !widget.isActive ||
           _isPaused ||
@@ -251,6 +281,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           .read(currentScanControllerProvider.notifier)
           .setImage(File(capture.path));
       await ref.read(currentScanControllerProvider.notifier).analyzeImage();
+      final analyzedScan = ref.read(currentScanControllerProvider);
+      debugPrint(
+        'SalonScale scan: analysis finished, '
+        'products=${analyzedScan.products.length}, '
+        'units=${analyzedScan.totalUnits}, '
+        'error=${analyzedScan.errorMessage ?? 'none'}, '
+        'warnings=${analyzedScan.analysis?.warnings.join(' | ') ?? 'none'}',
+      );
       if (!mounted ||
           !widget.isActive ||
           _isPaused ||
@@ -265,6 +303,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           _cameraError = '';
           _statusLabel = 'Scan failed - retrying';
         });
+        debugPrint('SalonScale scan failed: $error');
       }
     } finally {
       if (mounted) {
@@ -273,7 +312,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           _isAnalyzing = false;
         });
         if (widget.isActive && !_isPaused) {
-          _scheduleNextScan();
+          final nextDelay = _scanNowAfterBusy
+              ? const Duration(milliseconds: 250)
+              : _scanInterval;
+          _scanNowAfterBusy = false;
+          _scheduleNextScan(nextDelay);
         }
       }
     }
@@ -284,19 +327,20 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     final scan = ref.read(currentScanControllerProvider);
     if (scan.errorMessage != null) {
       controller.reset();
-      setState(() => _statusLabel = 'AI issue - retrying');
-      return;
-    }
-    if (scan.products.isEmpty) {
-      controller.reset();
-      setState(() => _statusLabel = 'Scanning live inventory');
+      setState(() => _statusLabel = _readableAnalysisError(scan.errorMessage!));
       return;
     }
     if (_isMockAnalysis(scan)) {
       controller.reset();
       setState(() {
-        _statusLabel = 'Connect OpenAI for live detection';
+        _statusLabel = _missingAiConfigurationMessage;
       });
+      return;
+    }
+    if (scan.products.isEmpty) {
+      final reason = _emptyScanReason(scan);
+      controller.reset();
+      setState(() => _statusLabel = reason);
       return;
     }
 
@@ -332,6 +376,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     controller.reset();
     _lastSavedSignature = signature;
     _lastSavedAt = now;
+    _showLastScannedNotice(
+      saved.products,
+      totalUnits: saved.totalUnits,
+      totalUniqueProducts: saved.totalUniqueProducts,
+      localImagePath: saved.localImagePath,
+    );
     ref.invalidate(scanHistoryProvider);
     ref.invalidate(inventoryRecordsProvider);
     if (!mounted) {
@@ -349,12 +399,113 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     );
   }
 
+  void _showLastScannedNotice(
+    List<ScanProductResult> products, {
+    required int totalUnits,
+    required int totalUniqueProducts,
+    required String localImagePath,
+  }) {
+    if (products.isEmpty) {
+      return;
+    }
+    final featured = _featuredScannedProduct(products);
+    final lookupKey = _imageLookupKey(featured);
+    final imageFuture = _imageLookupCache.putIfAbsent(
+      lookupKey,
+      () => ref.read(productImageLookupServiceProvider).lookup(featured),
+    );
+    _noticeDismissTimer?.cancel();
+    setState(() {
+      _lastScanNotice = _ScannedProductNotice(
+        product: featured,
+        totalUnits: totalUnits,
+        totalUniqueProducts: totalUniqueProducts,
+        localImagePath: localImagePath,
+        lookupKey: lookupKey,
+        imageFuture: imageFuture,
+      );
+    });
+    _noticeDismissTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted) {
+        setState(() => _lastScanNotice = null);
+      }
+    });
+  }
+
+  ScanProductResult _featuredScannedProduct(List<ScanProductResult> products) {
+    var featured = products.first;
+    for (final product in products.skip(1)) {
+      if (product.confirmedQuantity > featured.confirmedQuantity ||
+          (product.confirmedQuantity == featured.confirmedQuantity &&
+              product.recognitionConfidence > featured.recognitionConfidence)) {
+        featured = product;
+      }
+    }
+    return featured;
+  }
+
+  String _imageLookupKey(ScanProductResult product) {
+    return '${product.brand}|${product.confirmedName}'
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  void _dismissLastScannedNotice() {
+    _noticeDismissTimer?.cancel();
+    setState(() => _lastScanNotice = null);
+  }
+
   bool _isMockAnalysis(CurrentScanState scan) {
     return ref.read(appConfigProvider).useMockAi ||
         scan.analysis?.warnings.any(
               (warning) => warning.toLowerCase().contains('mock analysis mode'),
             ) ==
             true;
+  }
+
+  bool get _hasLiveAiConfiguration {
+    final config = ref.read(appConfigProvider);
+    return !config.useMockAi && config.hasAiCredentials;
+  }
+
+  String get _missingAiConfigurationMessage {
+    final config = ref.read(appConfigProvider);
+    if (config.useMockAi) {
+      return 'Live AI is off. Run .\\tool\\run_openai.ps1';
+    }
+    if (!config.hasAiCredentials) {
+      return 'OpenAI key missing. Run .\\tool\\run_openai.ps1';
+    }
+    return 'Live AI unavailable';
+  }
+
+  String _emptyScanReason(CurrentScanState scan) {
+    final warnings = scan.analysis?.warnings ?? const [];
+    for (final warning in warnings) {
+      final usefulWarning = warning.trim();
+      if (usefulWarning.isEmpty) {
+        continue;
+      }
+      return usefulWarning.length > 52
+          ? '${usefulWarning.substring(0, 49)}...'
+          : usefulWarning;
+    }
+    return 'No label read yet - hold steady';
+  }
+
+  String _readableAnalysisError(String error) {
+    final lower = error.toLowerCase();
+    if (lower.contains('timed out')) {
+      return 'OpenAI timed out - retrying';
+    }
+    if (lower.contains('api key') || lower.contains('401')) {
+      return _missingAiConfigurationMessage;
+    }
+    if (lower.contains('network') || lower.contains('socket')) {
+      return 'Network issue - retrying';
+    }
+    return 'AI issue - retrying';
   }
 
   String _scanSignature(List<ScanProductResult> products) {
@@ -386,8 +537,13 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
     if (!widget.isActive) {
       return;
     }
-    _scanGeneration++;
-    final wasBusy = _isCapturing || _isAnalyzing;
+    if (_isCapturing || _isAnalyzing) {
+      _scanGeneration++;
+      _scanNowAfterBusy = true;
+      ref.read(currentScanControllerProvider.notifier).reset();
+      setState(() => _statusLabel = 'Scanning next clear frame');
+      return;
+    }
     ref.read(currentScanControllerProvider.notifier).reset();
     _scanTimer?.cancel();
     setState(() {
@@ -395,14 +551,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       _cameraError = '';
       _statusLabel = 'Scanning live inventory';
     });
-    if (wasBusy) {
-      return;
-    }
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
       _initializeCamera();
     } else {
-      _scheduleNextScan(const Duration(milliseconds: 500));
+      _scheduleNextScan(Duration.zero);
     }
   }
 
@@ -485,12 +638,23 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                     ],
                   ),
                   const Spacer(),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: _lastScanNotice == null
+                        ? const SizedBox.shrink()
+                        : _LastScannedProductCard(
+                            key: ValueKey(_lastScanNotice!.lookupKey),
+                            notice: _lastScanNotice!,
+                            onDismiss: _dismissLastScannedNotice,
+                          ),
+                  ),
+                  if (_lastScanNotice != null) const SizedBox(height: 14),
                   _ScannerControls(
-                    onCamera: _captureAndAutoLog,
                     onInventory: _openInventory,
                     onRestart: _restartScan,
-                    canCapture:
-                        !_isInitializing && !_isCapturing && !_isAnalyzing,
+                    isBusy: _isInitializing || _isCapturing || _isAnalyzing,
                   ),
                   const SizedBox(height: 26),
                 ],
@@ -498,6 +662,281 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ScannedProductNotice {
+  const _ScannedProductNotice({
+    required this.product,
+    required this.totalUnits,
+    required this.totalUniqueProducts,
+    required this.localImagePath,
+    required this.lookupKey,
+    required this.imageFuture,
+  });
+
+  final ScanProductResult product;
+  final int totalUnits;
+  final int totalUniqueProducts;
+  final String localImagePath;
+  final String lookupKey;
+  final Future<ProductWebImage?> imageFuture;
+}
+
+class _LastScannedProductCard extends StatelessWidget {
+  const _LastScannedProductCard({
+    required this.notice,
+    required this.onDismiss,
+    super.key,
+  });
+
+  final _ScannedProductNotice notice;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final product = notice.product;
+    final unitsText =
+        notice.totalUnits == 1 ? '1 unit' : '${notice.totalUnits} units';
+    final detailText = notice.totalUniqueProducts == 1
+        ? 'Added $unitsText'
+        : 'Added $unitsText across ${notice.totalUniqueProducts} products';
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 390),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(AppRadius.xl),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.34)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.22),
+                    blurRadius: 28,
+                    offset: const Offset(0, 14),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  _WebProductThumbnail(
+                    imageFuture: notice.imageFuture,
+                    localImagePath: notice.localImagePath,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: AppColors.mint,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Scanned',
+                              style: TextStyle(
+                                color: AppColors.muted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          product.confirmedName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.ink,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            height: 1.1,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          detailText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    tooltip: 'Dismiss',
+                    onPressed: onDismiss,
+                    icon: const Icon(Icons.close_rounded),
+                    style: IconButton.styleFrom(
+                      foregroundColor: AppColors.muted,
+                      minimumSize: const Size(36, 36),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WebProductThumbnail extends StatelessWidget {
+  const _WebProductThumbnail({
+    required this.imageFuture,
+    required this.localImagePath,
+  });
+
+  final Future<ProductWebImage?> imageFuture;
+  final String localImagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: SizedBox(
+        width: 68,
+        height: 68,
+        child: FutureBuilder<ProductWebImage?>(
+          future: imageFuture,
+          builder: (context, snapshot) {
+            final image = snapshot.data;
+            if (image != null) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.network(
+                    image.imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        _ProductImageFallback(localImagePath: localImagePath),
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return child;
+                      }
+                      return const _ProductImageLoading();
+                    },
+                  ),
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Container(
+                      margin: const EdgeInsets.all(5),
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.58),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Icon(
+                        Icons.public_rounded,
+                        color: Colors.white,
+                        size: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _ProductImageLoading();
+            }
+            return _ProductImageFallback(localImagePath: localImagePath);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductImageLoading extends StatelessWidget {
+  const _ProductImageLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(gradient: AppColors.softGradient),
+      child: Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.indigo.withValues(alpha: 0.82),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductImageFallback extends StatelessWidget {
+  const _ProductImageFallback({this.localImagePath = ''});
+
+  final String localImagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = localImagePath.trim();
+    if (path.isNotEmpty) {
+      final file = File(path);
+      if (file.existsSync()) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.file(file, fit: BoxFit.cover),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: Container(
+                margin: const EdgeInsets.all(5),
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.58),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Icon(
+                  Icons.photo_camera_rounded,
+                  color: Colors.white,
+                  size: 12,
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+    }
+    return const DecoratedBox(
+      decoration: BoxDecoration(gradient: AppColors.softGradient),
+      child: Icon(
+        Icons.inventory_2_outlined,
+        color: AppColors.indigo,
+        size: 26,
       ),
     );
   }
@@ -567,71 +1006,113 @@ class _ScannerBackdrop extends StatelessWidget {
 
 class _ScannerControls extends StatelessWidget {
   const _ScannerControls({
-    required this.onCamera,
     required this.onInventory,
     required this.onRestart,
-    required this.canCapture,
+    required this.isBusy,
   });
 
-  final VoidCallback onCamera;
   final VoidCallback onInventory;
   final VoidCallback onRestart;
-  final bool canCapture;
+  final bool isBusy;
 
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        decoration: BoxDecoration(
-          color: AppColors.darkNav.withValues(alpha: 0.82),
-          borderRadius: BorderRadius.circular(AppRadius.xl),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.24),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _BottomControl(
-              icon: Icons.camera_alt_outlined,
-              label: 'Scan',
-              onTap: canCapture ? onCamera : null,
-            ),
-            const SizedBox(width: 24),
-            GestureDetector(
-              onTap: onRestart,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: AppColors.indigo,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.indigo.withValues(alpha: 0.38),
-                      blurRadius: 22,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.darkNav.withValues(alpha: 0.64),
+              borderRadius: BorderRadius.circular(AppRadius.xl),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.26),
+                  blurRadius: 28,
+                  offset: const Offset(0, 14),
                 ),
-                child: const Icon(Icons.center_focus_strong,
-                    color: Colors.white, size: 34),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _BottomControl(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Inventory',
+                  onTap: onInventory,
+                ),
+                const SizedBox(width: 26),
+                _LiveScanButton(
+                  isBusy: isBusy,
+                  onTap: onRestart,
+                ),
+                const SizedBox(width: 26),
+                _BottomControl(
+                  icon: Icons.replay_rounded,
+                  label: 'Retry',
+                  onTap: onRestart,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveScanButton extends StatefulWidget {
+  const _LiveScanButton({
+    required this.isBusy,
+    required this.onTap,
+  });
+
+  final bool isBusy;
+  final VoidCallback onTap;
+
+  @override
+  State<_LiveScanButton> createState() => _LiveScanButtonState();
+}
+
+class _LiveScanButtonState extends State<_LiveScanButton> {
+  var _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          width: 74,
+          height: 74,
+          decoration: BoxDecoration(
+            color: widget.isBusy ? Colors.white : AppColors.indigo,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.indigo.withValues(alpha: 0.38),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
               ),
-            ),
-            const SizedBox(width: 24),
-            _BottomControl(
-              icon: Icons.inventory_2_outlined,
-              label: 'Inventory',
-              onTap: onInventory,
-            ),
-          ],
+            ],
+          ),
+          child: Icon(
+            widget.isBusy
+                ? Icons.auto_awesome_motion_rounded
+                : Icons.center_focus_strong,
+            color: widget.isBusy ? AppColors.indigo : Colors.white,
+            size: 34,
+          ),
         ),
       ),
     );

@@ -26,7 +26,19 @@ class APIProductRecognitionService implements ProductRecognitionService {
   final Duration timeout;
 
   static const prompt = '''
-You are analyzing a salon backbar inventory image. Analyze the entire image from edge to edge, not only the center of the frame. Identify only products clearly visible in the image. Match products against the supplied product catalogue. Products may have visually similar packaging but different shade codes. Read shade codes carefully. Estimate the number of visible units. Do not invent products. When uncertain, return null for the matched product ID and explain the uncertainty in the warnings array. Return valid JSON only.
+You are the product recognition engine for a live store inventory scanner. Analyze the entire image from edge to edge, not only the center of the frame.
+
+Identify real retail/product identity from visible text, logos, brand marks, product names, variants, shade codes, sizes, and distinctive packaging. Do not return generic object names like "red can", "white bottle", "tube", or "box" as inventory. If the product identity is not readable or strongly recognizable, skip that item or return it with low confidence and a specific warning.
+
+Camera frames may come from mirrored webcams. If label text appears reversed, mentally unmirror it and use the corrected brand/product name. If the product is a real package with partially readable brand/product text, return the best supported identity with lower confidence and a warning instead of returning an empty list.
+
+If the best available description is only color, shape, material, or packaging, for example "blue and white container", "plastic tube", or "white bottle", return no detected product for that object. Only return items that appear to be existing commercial products with a readable or strongly recognizable brand/product identity.
+
+The supplied catalogue is optional reference data, not the complete product universe. Use a catalogue product ID only when visible evidence supports it. If the product is not in the catalogue, still identify it from the image, set matchedProductId to null, set matchStatus to unmatched, and fill brand/category/packagingType from the label and packaging.
+
+Group identical visible units into one detectedProducts entry and set quantity to the visible count. Count partially occluded repeated units when enough visible label, silhouette, cap, colorway, or packaging evidence supports that they are the same product. Return separate entries for different products, variants, sizes, shades, or packaging types. Do not invent hidden products outside the image.
+
+Return valid JSON only using the app schema.
 ''';
 
   @override

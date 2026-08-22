@@ -28,21 +28,42 @@ class OpenAIProductRecognitionService implements ProductRecognitionService {
   final Duration timeout;
 
   static const _instructions = '''
-You analyze salon inventory photos for product logging.
-Analyze the entire image from edge to edge, not only the center of the frame.
-Identify only products that are clearly visible in the image.
-Use the supplied catalogue to match products by visible brand, product line, package type, and shade code.
-Use a catalogue product id only when the visual evidence supports it.
-If a visible product is not in the catalogue, still identify it from the image, infer the best brand/category/package fields you can, set matchedProductId to null, and set matchStatus to unmatched.
-Estimate a normalized bounding box for every detected physical product using left, top, width, and height values from 0 to 1.
-Count visible units or packages. Do not invent products outside the image.
-If text, shade, or packaging is unclear, keep the best visual description, lower confidence, and add a warning.
-Return an empty detectedProducts list if there are no identifiable salon products.
+You are the product recognition engine for a live store inventory scanner.
+Analyze the entire camera image from edge to edge. Do not limit recognition to the center of the frame or the visible scanner chrome.
+
+Primary goal:
+- Identify real retail/product identity, not generic object descriptions.
+- First read visible package text, logos, brand marks, product names, variants, shade codes, sizes, and labels.
+- Camera frames may come from mirrored webcams. If label text appears reversed, mentally unmirror it and use the corrected brand/product name.
+- If the product is a real package with partially readable brand/product text, return the best supported identity with lower confidence and a warning instead of returning an empty list.
+- detectedName must be the most specific product display name supported by the image, for example "Coca-Cola Classic", "The Ordinary Hyaluronic Acid 2% + B5", or "Professional Colour Cream 5N".
+- Do not use generic names like "red can", "white dropper bottle", "box", "tube", or "bottle" as products. If the label or brand is not readable enough to identify a product, do not return that item unless there is strong distinctive packaging evidence and add a warning.
+- If the best available description is only color, shape, material, or packaging, for example "blue and white container", "plastic tube", or "white bottle", return no detected product for that object.
+- Only return items that appear to be existing commercial products with a readable or strongly recognizable brand/product identity.
+
+Catalogue matching:
+- The supplied catalogue is optional reference data, not the full universe of valid products.
+- Use a catalogue product id only when visible brand, product line, packaging, shade/variant, or barcode evidence supports it.
+- If a visible product is not in the catalogue, still identify it from the image, set matchedProductId to null, set matchStatus to unmatched, and fill brand/category/packagingType from the label and packaging.
+- Never force an unmatched grocery, beverage, skincare, cosmetic, or household product into the salon catalogue.
+
+Multiple products and quantity:
+- Group identical visible units into one detectedProducts entry and set quantity to the visible count.
+- Count partially occluded matching units when enough of the label, silhouette, cap, colorway, or repeated packaging is visible to support that they are the same product.
+- Example: two Coca-Cola bottles on a table, one partly behind the other, should return one Coca-Cola entry with quantity 2.
+- Return separate entries for different brands, products, variants, sizes, shades, or packaging types.
+- Do not invent hidden products outside the image.
+
+Bounding boxes and uncertainty:
+- Estimate normalizedBoundingBox with left, top, width, and height values from 0 to 1. For grouped identical products, cover the visible group.
+- Keep recognitionConfidence high only when the brand/product text or distinctive packaging is clear.
+- If text, variant, size, or quantity is uncertain, lower confidence and add a specific warning.
+- Return an empty detectedProducts list if no product identity is readable or strongly recognizable.
 ''';
 
   static const _responseFormat = {
     'type': 'json_schema',
-    'name': 'salon_scan_analysis',
+    'name': 'inventory_scan_analysis',
     'strict': true,
     'schema': {
       'type': 'object',
@@ -145,7 +166,7 @@ Return an empty detectedProducts list if there are no identifiable salon product
               {
                 'type': 'input_text',
                 'text':
-                    'Catalogue JSON:\n${_catalogueJson(catalogue)}\n\nAnalyze the attached camera image and return the structured inventory scan result.',
+                    'Optional catalogue JSON:\n${_catalogueJson(catalogue)}\n\nAnalyze the attached camera image and return only the structured inventory scan result. Prioritize readable brand and product text over generic object descriptions.',
               },
               {
                 'type': 'input_image',

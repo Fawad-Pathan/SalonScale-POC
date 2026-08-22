@@ -46,6 +46,9 @@ void main() {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       expect(body['model'], 'test-model');
       expect(body['store'], isFalse);
+      expect(body['instructions'], contains('Coca-Cola Classic'));
+      expect(body['instructions'], contains('Group identical visible units'));
+      expect(body['instructions'], contains('optional reference data'));
       expect(
         (((body['text'] as Map)['format'] as Map)['schema'] as Map)['required'],
         contains('detectedProducts'),

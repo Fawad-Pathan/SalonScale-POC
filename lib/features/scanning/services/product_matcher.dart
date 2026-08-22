@@ -21,20 +21,37 @@ class ProductMatcher {
 
   ScanAnalysisResult refineAnalysis(
       ScanAnalysisResult result, List<SalonProduct> catalogue) {
-    final refined = result.detectedProducts.map((detected) {
+    final warnings = [...result.warnings];
+    final identifiable = <DetectedProduct>[];
+    var skippedLowInformation = 0;
+    for (final detected in result.detectedProducts) {
+      if (_hasEnoughProductIdentity(detected)) {
+        identifiable.add(detected);
+      } else {
+        skippedLowInformation++;
+      }
+    }
+    if (skippedLowInformation > 0) {
+      warnings.add(
+        'Skipped $skippedLowInformation low-information detection(s) without a readable product identity.',
+      );
+    }
+
+    final refined = identifiable.map((detected) {
       final match = findBestMatch(detected, catalogue);
-      final warnings = [...detected.warnings];
+      final productWarnings = [...detected.warnings];
       if (detected.recognitionConfidence < 0.6) {
-        warnings.add('Low recognition confidence. Review before saving.');
+        productWarnings
+            .add('Low recognition confidence. Review before saving.');
       }
       if (match == null || match.score < 0.52) {
-        warnings.add('No confident catalogue match found.');
+        productWarnings.add('No confident catalogue match found.');
         return detected.copyWith(
           clearMatchedProductId: true,
           catalogueMatchConfidence:
               min(detected.catalogueMatchConfidence, match?.score ?? 0),
           matchStatus: 'unmatched',
-          warnings: warnings,
+          warnings: productWarnings,
         );
       }
       final matchStatus =
@@ -42,11 +59,13 @@ class ProductMatcher {
               ? 'matched'
               : 'needs_review';
       if (matchStatus == 'needs_review') {
-        warnings.add('Suggested catalogue match needs manual review.');
+        productWarnings.add('Suggested catalogue match needs manual review.');
       }
+      final normalizedName = _normalize(detected.detectedName);
       return detected.copyWith(
         matchedProductId: match.product.id,
-        detectedName: detected.detectedName.isEmpty
+        detectedName: detected.detectedName.isEmpty ||
+                _genericProductNames.contains(normalizedName)
             ? match.product.name
             : detected.detectedName,
         brand: detected.brand.isEmpty ? match.product.brand : detected.brand,
@@ -62,11 +81,14 @@ class ProductMatcher {
         catalogueMatchConfidence:
             _clamp01((detected.catalogueMatchConfidence + match.score) / 2),
         matchStatus: matchStatus,
-        warnings: warnings,
+        warnings: productWarnings,
       );
     }).toList();
 
-    return result.copyWith(detectedProducts: mergeDuplicateDetections(refined));
+    return result.copyWith(
+      warnings: warnings,
+      detectedProducts: mergeDuplicateDetections(refined),
+    );
   }
 
   ProductMatch? findBestMatch(
@@ -87,7 +109,7 @@ class ProductMatcher {
     for (final detection in detections) {
       final key = detection.matchedProductId?.isNotEmpty == true
           ? 'product:${detection.matchedProductId}'
-          : 'visual:${_normalize(detection.detectedName)}:${_normalizeShade(detection.shadeCode)}:${_normalize(detection.packagingType)}';
+          : 'visual:${_normalize(detection.brand)}:${_normalize(detection.detectedName)}:${_normalizeShade(detection.shadeCode)}:${_normalize(detection.packagingType)}';
       final existing = merged[key];
       if (existing == null) {
         merged[key] = detection;
@@ -106,6 +128,80 @@ class ProductMatcher {
       }
     }
     return merged.values.toList();
+  }
+
+  bool _hasEnoughProductIdentity(DetectedProduct detected) {
+    final brand = _normalize(detected.brand);
+    final name = _normalize(detected.detectedName);
+    if (name.isEmpty || _unknownIdentityValues.contains(name)) {
+      return false;
+    }
+
+    final warningText = _normalize(
+      '${detected.notes} ${detected.warnings.join(' ')}',
+    );
+    final textLooksUnreadable = warningText.contains('label unreadable') ||
+        warningText.contains('text unreadable') ||
+        warningText.contains('brand unreadable') ||
+        warningText.contains('no readable text');
+
+    if (_isGenericDescription(name)) {
+      return false;
+    }
+
+    final matchedProductId = detected.matchedProductId?.trim();
+    if (matchedProductId != null && matchedProductId.isNotEmpty) {
+      return true;
+    }
+
+    if (_isKnownIdentityValue(brand)) {
+      return !textLooksUnreadable || detected.recognitionConfidence >= 0.58;
+    }
+
+    final meaningfulTokens = name
+        .split(' ')
+        .where((token) => token.isNotEmpty)
+        .where((token) => !_genericIdentityTokens.contains(token))
+        .toList();
+    if (meaningfulTokens.length >= 2) {
+      return !textLooksUnreadable || detected.recognitionConfidence >= 0.72;
+    }
+
+    if (meaningfulTokens.length == 1 &&
+        meaningfulTokens.single.length >= 4 &&
+        detected.recognitionConfidence >= 0.72) {
+      return !textLooksUnreadable;
+    }
+
+    return false;
+  }
+
+  bool _isGenericDescription(String normalizedName) {
+    if (_genericProductNames.contains(normalizedName)) {
+      return true;
+    }
+
+    final tokens = normalizedName
+        .split(' ')
+        .where((token) => token.isNotEmpty)
+        .where((token) => !_connectorTokens.contains(token))
+        .toList();
+    if (tokens.isEmpty) {
+      return true;
+    }
+
+    final genericCount =
+        tokens.where((token) => _genericIdentityTokens.contains(token)).length;
+    if (genericCount == tokens.length) {
+      return true;
+    }
+
+    final hasContainerWord =
+        tokens.any((token) => _containerIdentityTokens.contains(token));
+    final hasOnlyAppearanceWords = tokens.every((token) =>
+        _genericIdentityTokens.contains(token) ||
+        _appearanceIdentityTokens.contains(token));
+    return hasContainerWord && hasOnlyAppearanceWords;
   }
 
   ProductMatch _score(DetectedProduct detected, SalonProduct product) {
@@ -214,5 +310,140 @@ class ProductMatcher {
     return value.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '');
   }
 
+  bool _isKnownIdentityValue(String value) {
+    return value.isNotEmpty && !_unknownIdentityValues.contains(value);
+  }
+
   double _clamp01(double value) => value.clamp(0, 1).toDouble();
+
+  static const _unknownIdentityValues = {
+    'unknown',
+    'unclear',
+    'unreadable',
+    'not visible',
+    'none',
+    'n a',
+    'na',
+  };
+
+  static const _genericProductNames = {
+    'red can',
+    'white can',
+    'black can',
+    'silver can',
+    'green can',
+    'blue can',
+    'yellow can',
+    'red bottle',
+    'white bottle',
+    'black bottle',
+    'clear bottle',
+    'dropper bottle',
+    'white dropper bottle',
+    'serum bottle',
+    'plastic bottle',
+    'tube',
+    'bottle',
+    'can',
+    'box',
+    'jar',
+    'carton',
+    'packet',
+    'package',
+    'container',
+  };
+
+  static const _genericIdentityTokens = {
+    'red',
+    'white',
+    'black',
+    'silver',
+    'green',
+    'blue',
+    'yellow',
+    'orange',
+    'purple',
+    'pink',
+    'clear',
+    'transparent',
+    'small',
+    'large',
+    'tall',
+    'short',
+    'plastic',
+    'glass',
+    'metal',
+    'paper',
+    'dropper',
+    'pump',
+    'spray',
+    'cap',
+    'lid',
+    'label',
+    'bottle',
+    'can',
+    'box',
+    'tube',
+    'jar',
+    'carton',
+    'packet',
+    'package',
+    'container',
+    'product',
+    'item',
+  };
+
+  static const _connectorTokens = {
+    'a',
+    'an',
+    'and',
+    'or',
+    'of',
+    'with',
+    'for',
+    'the',
+  };
+
+  static const _appearanceIdentityTokens = {
+    'red',
+    'white',
+    'black',
+    'silver',
+    'green',
+    'blue',
+    'yellow',
+    'orange',
+    'purple',
+    'pink',
+    'clear',
+    'transparent',
+    'small',
+    'large',
+    'tall',
+    'short',
+    'plastic',
+    'glass',
+    'metal',
+    'paper',
+  };
+
+  static const _containerIdentityTokens = {
+    'dropper',
+    'pump',
+    'spray',
+    'cap',
+    'lid',
+    'label',
+    'bottle',
+    'can',
+    'box',
+    'tube',
+    'jar',
+    'carton',
+    'packet',
+    'package',
+    'container',
+    'product',
+    'item',
+  };
 }

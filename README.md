@@ -1,17 +1,18 @@
 # SalonScale Inventory Scanner PoC
 
-A Flutter proof of concept for scanning salon backbar inventory from a still image, reviewing AI-detected products, saving confirmed results, and asking inventory questions through a text assistant.
+A Flutter proof of concept for continuously scanning product inventory with the camera, using OpenAI vision to read real product labels, auto-saving detected counts, and asking inventory questions through a text assistant.
 
 ## Features
 
 - Anonymous Firebase Authentication when Firebase is configured, with local demo fallback.
-- Camera and gallery image selection with permission handling.
-- Real OpenAI vision recognition for camera captures when configured.
-- Mock image recognition that works without API keys or paid services.
+- Full-screen camera scanner with permission handling and automatic periodic capture.
+- Real OpenAI vision recognition for camera frames when configured.
+- Mock image recognition that runs without API keys and avoids fake inventory rows.
 - Configurable server AI provider behind `ProductRecognitionService`.
 - Product Catalogue for scanner-ready products, reference images, SKU/barcode metadata, readiness status, and local add/edit/archive workflows.
-- Live scanner detection markers and bottom product cards with saved reference images, current camera crop preview, quantity adjustment, and match correction.
-- Strict JSON parsing and local catalogue matching after AI analysis.
+- Apple-inspired scanner UI with restrained full-screen overlay and translucent controls.
+- Strict JSON parsing, optional catalogue matching, and generic-object filtering after AI analysis.
+- Multi-product quantity grouping for repeated visible items.
 - Editable scan result cards for names, quantities, and catalogue matches.
 - Local mock persistence with `shared_preferences`; Firestore/Storage repository when Firebase initializes.
 - Scan history, scan details, inventory summary, and mock assistant chat.
@@ -80,21 +81,7 @@ The repository includes permission entries in `android/app/src/main/AndroidManif
 
 ## AI Configuration
 
-For local real scanning, pass the OpenAI key with `--dart-define` when running the app:
-
-```powershell
-C:\Users\pfawa\flutter\bin\flutter.bat run -d emulator-5554 --dart-define=USE_MOCK_AI=false --dart-define=AI_PROVIDER=openai --dart-define=AI_API_KEY=sk-your-key --dart-define=AI_MODEL=gpt-4.1-mini
-```
-
-Or, after setting `.env`, use the local launcher:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tool\run_openai.ps1 -DeviceId emulator-5554
-```
-
-The scanner captures a camera frame, sends it to the OpenAI Responses API as an image input, asks for strict JSON, matches the output against `assets/data/products.json`, and then shows editable rows. Tap **Save** on the review screen to log the scan into local/Firebase-backed inventory.
-
-You can also keep equivalent values in `.env.example` as a reference:
+For local real scanning, create a `.env` file in the project root and paste your OpenAI key there:
 
 ```text
 AI_API_KEY=sk-your-key
@@ -105,11 +92,30 @@ USE_MOCK_AI=false
 DEMO_SALON_ID=demo_salon
 ```
 
+Then use the local launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tool\run_openai.ps1 -DeviceId emulator-5554
+```
+
+Android Studio's green Run button will start the app, but it will not pass the
+local `.env` OpenAI key unless you manually add the same Dart defines to that
+run configuration. If the scanner says `OpenAI key missing`, launch it with the
+PowerShell command above.
+
+You can also pass the same values with `--dart-define` when running the app:
+
+```powershell
+C:\Users\pfawa\flutter\bin\flutter.bat run -d emulator-5554 --dart-define=USE_MOCK_AI=false --dart-define=AI_PROVIDER=openai --dart-define=AI_API_KEY=sk-your-key --dart-define=AI_MODEL=gpt-4.1-mini
+```
+
+The scanner captures camera frames continuously, sends each frame to the OpenAI Responses API as a high-detail image input, asks for strict JSON, and auto-logs real detections into local/Firebase-backed inventory. The prompt prioritizes readable brand/product text and distinctive packaging, supports products outside the sample salon catalogue, and groups repeated visible items into a single product quantity.
+
 For production, prefer a server-controlled endpoint over direct client-side model access. Set `AI_PROVIDER=api`, `AI_ENDPOINT=https://your-server.example.com/analyze`, and `USE_MOCK_AI=false`. The custom AI endpoint should accept multipart form data with `image`, `prompt`, `catalogue`, and `responseFormat=json`, then return valid JSON using the schema described in the code and docs.
 
 ## Mock Mode
 
-Leave `USE_MOCK_AI=true` or omit AI credentials. The scanner returns realistic sample detections and the assistant answers common inventory questions from saved local data.
+Leave `USE_MOCK_AI=true` or omit AI credentials to run without OpenAI. Mock mode does not create pretend product detections; it keeps scanning empty so the inventory is not polluted. The assistant answers common inventory questions from saved local data.
 
 ## Running Tests
 
@@ -140,7 +146,7 @@ No service account keys or credentials should be committed.
 - Local mock persistence is single-device.
 - Product image crops are placeholders.
 - Voice input is a visual placeholder.
-- Continuous video recognition and live overlays are intentionally out of scope for the MVP.
+- Direct client-side OpenAI recognition captures periodic camera frames rather than streaming video.
 
 ## Future Improvements
 

@@ -37,23 +37,7 @@ class _AppShellState extends State<AppShell> {
     ];
 
     return Scaffold(
-      body: Stack(
-        children: List.generate(pages.length, (index) {
-          final selected = index == _index;
-          return TickerMode(
-            enabled: selected,
-            child: IgnorePointer(
-              ignoring: !selected,
-              child: AnimatedOpacity(
-                opacity: selected ? 1 : 0,
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                child: pages[index],
-              ),
-            ),
-          );
-        }),
-      ),
+      body: pages[_index],
     );
   }
 

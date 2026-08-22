@@ -66,7 +66,7 @@ class HomeScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Scan backbar products, confirm counts, and keep inventory fresh.',
+                    'Scan products, capture counts, and keep inventory fresh.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ],
@@ -93,7 +93,7 @@ class HomeScreen extends ConsumerWidget {
                         ),
                         SizedBox(height: AppSpacing.sm),
                         Text(
-                          'Point the camera at products and detected inventory is logged automatically.',
+                          'Point the camera at products and readable items are logged automatically.',
                           style: TextStyle(
                             color: AppColors.muted,
                             height: 1.35,
@@ -241,7 +241,7 @@ class HomeScreen extends ConsumerWidget {
                         ),
                         SizedBox(height: AppSpacing.xs),
                         Text(
-                          'Summarize low stock, recent scans, and shades.',
+                          'Summarize low stock, recent scans, and product counts.',
                           style: TextStyle(color: AppColors.muted),
                         ),
                       ],

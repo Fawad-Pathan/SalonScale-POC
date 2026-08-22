@@ -14,6 +14,7 @@ import '../models/scan_product_result.dart';
 import '../services/api_product_recognition_service.dart';
 import '../services/mock_product_recognition_service.dart';
 import '../services/openai_product_recognition_service.dart';
+import '../services/product_image_lookup_service.dart';
 import '../services/product_recognition_service.dart';
 
 final productRecognitionServiceProvider =
@@ -30,6 +31,11 @@ final productRecognitionServiceProvider =
   }
   return APIProductRecognitionService(
       endpoint: config.aiEndpoint, apiKey: config.aiApiKey);
+});
+
+final productImageLookupServiceProvider =
+    Provider<ProductImageLookupService>((ref) {
+  return ProductImageLookupService();
 });
 
 final currentScanControllerProvider =

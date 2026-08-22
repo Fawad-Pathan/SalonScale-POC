@@ -97,7 +97,7 @@ class _ScanProcessingScreenState extends ConsumerState<ScanProcessingScreen> {
                   _ProcessingCard(
                     stage: scan.stage,
                     message: scan.errorMessage ??
-                        'Identifying products, shade codes, packaging, and catalogue matches.',
+                        'Reading labels, brands, quantities, and catalogue matches.',
                     isError: scan.errorMessage != null,
                     onRetry: scan.errorMessage == null
                         ? null

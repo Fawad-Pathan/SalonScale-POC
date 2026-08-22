@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_shell.dart';
 import 'routes.dart';
 import 'theme.dart';
 
@@ -12,7 +13,7 @@ class SalonScalePocApp extends StatelessWidget {
       title: 'SalonScale PoC',
       debugShowCheckedModeBanner: false,
       theme: buildSalonTheme(),
-      initialRoute: AppRoutes.splash,
+      home: const AppShell(initialIndex: 2),
       onGenerateRoute: AppRoutes.onGenerateRoute,
     );
   }

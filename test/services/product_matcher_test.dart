@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:salonscale_poc/features/catalogue/models/salon_product.dart';
 import 'package:salonscale_poc/features/scanning/models/detected_product.dart';
+import 'package:salonscale_poc/features/scanning/models/scan_analysis_result.dart';
 import 'package:salonscale_poc/features/scanning/services/product_matcher.dart';
 
 void main() {
@@ -83,5 +84,147 @@ void main() {
 
     expect(merged, hasLength(1));
     expect(merged.single.quantity, 5);
+  });
+
+  test('keeps branded products outside the catalogue as unmatched inventory',
+      () {
+    const matcher = ProductMatcher();
+    const result = ScanAnalysisResult(
+      scanQuality: 'good',
+      warnings: [],
+      detectedProducts: [
+        DetectedProduct(
+          temporaryId: 'coke_001',
+          detectedName: 'Coca-Cola Classic',
+          brand: 'Coca-Cola',
+          category: 'Beverage',
+          packagingType: 'bottle',
+          shadeCode: '',
+          quantity: 2,
+          recognitionConfidence: 0.91,
+          catalogueMatchConfidence: 0,
+          notes: 'Two matching bottles visible, one partially behind another.',
+        ),
+      ],
+    );
+
+    final refined = matcher.refineAnalysis(result, catalogue);
+
+    expect(refined.detectedProducts, hasLength(1));
+    expect(refined.detectedProducts.single.detectedName, 'Coca-Cola Classic');
+    expect(refined.detectedProducts.single.matchedProductId, isNull);
+    expect(refined.detectedProducts.single.matchStatus, 'unmatched');
+    expect(refined.detectedProducts.single.quantity, 2);
+  });
+
+  test('skips generic low-information object descriptions', () {
+    const matcher = ProductMatcher();
+    const result = ScanAnalysisResult(
+      scanQuality: 'fair',
+      warnings: [],
+      detectedProducts: [
+        DetectedProduct(
+          temporaryId: 'generic_001',
+          detectedName: 'White Dropper Bottle',
+          brand: '',
+          category: 'Skin Care',
+          packagingType: 'dropper bottle',
+          shadeCode: '',
+          quantity: 1,
+          recognitionConfidence: 0.74,
+          catalogueMatchConfidence: 0,
+          notes: 'No readable label text.',
+        ),
+      ],
+    );
+
+    final refined = matcher.refineAnalysis(result, catalogue);
+
+    expect(refined.detectedProducts, isEmpty);
+    expect(refined.warnings.single, contains('low-information'));
+  });
+
+  test('skips appearance-only container descriptions', () {
+    const matcher = ProductMatcher();
+    const result = ScanAnalysisResult(
+      scanQuality: 'fair',
+      warnings: [],
+      detectedProducts: [
+        DetectedProduct(
+          temporaryId: 'generic_002',
+          detectedName: 'Blue and White Container',
+          brand: '',
+          category: 'Skin Care',
+          packagingType: 'container',
+          shadeCode: '',
+          quantity: 1,
+          recognitionConfidence: 0.88,
+          catalogueMatchConfidence: 0,
+          notes: 'No readable product name or brand.',
+        ),
+      ],
+    );
+
+    final refined = matcher.refineAnalysis(result, catalogue);
+
+    expect(refined.detectedProducts, isEmpty);
+    expect(refined.warnings.single, contains('low-information'));
+  });
+
+  test('does not trust catalogue ids attached to generic descriptions', () {
+    const matcher = ProductMatcher();
+    const result = ScanAnalysisResult(
+      scanQuality: 'fair',
+      warnings: [],
+      detectedProducts: [
+        DetectedProduct(
+          temporaryId: 'generic_003',
+          detectedName: 'Blue and White Container',
+          matchedProductId: 'product_001',
+          brand: '',
+          category: 'Hair Colour',
+          packagingType: 'container',
+          shadeCode: '',
+          quantity: 1,
+          recognitionConfidence: 0.91,
+          catalogueMatchConfidence: 0.91,
+          notes: 'No readable product name or brand.',
+        ),
+      ],
+    );
+
+    final refined = matcher.refineAnalysis(result, catalogue);
+
+    expect(refined.detectedProducts, isEmpty);
+  });
+
+  test('keeps readable real product names even when outside catalogue', () {
+    const matcher = ProductMatcher();
+    const result = ScanAnalysisResult(
+      scanQuality: 'good',
+      warnings: [],
+      detectedProducts: [
+        DetectedProduct(
+          temporaryId: 'aestura_001',
+          detectedName: 'Aestura Atobarrier 365 Cream',
+          brand: 'Aestura',
+          category: 'Skincare',
+          packagingType: 'tube',
+          shadeCode: '',
+          quantity: 1,
+          recognitionConfidence: 0.86,
+          catalogueMatchConfidence: 0,
+          notes: 'Mirrored label text is readable.',
+        ),
+      ],
+    );
+
+    final refined = matcher.refineAnalysis(result, catalogue);
+
+    expect(refined.detectedProducts, hasLength(1));
+    expect(
+      refined.detectedProducts.single.detectedName,
+      'Aestura Atobarrier 365 Cream',
+    );
   });
 }
